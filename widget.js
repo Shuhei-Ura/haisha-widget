@@ -17,10 +17,11 @@ function sameDay(dt){
   var d=new Date(dt);
   return d.getFullYear()===current.getFullYear()&&d.getMonth()===current.getMonth()&&d.getDate()===current.getDate();
 }
+function driverName(rec, key){ return (rec[key]&&rec[key].name)?rec[key].name:"(未割当)"; }
 
 function axisHTML(){
   var h,left,html='<div style="display:flex;align-items:flex-end;margin-bottom:4px">';
-  html += '<div style="width:120px;flex:none"></div>';
+  html += '<div style="width:150px;flex:none"></div>';
   html += '<div style="position:relative;flex:1;height:20px;border-bottom:1px solid #ccc">';
   for(h=HOUR_START;h<=HOUR_END;h+=2){
     left=((h-HOUR_START)/SPAN)*100;
@@ -29,10 +30,11 @@ function axisHTML(){
   return html+'</div></div>';
 }
 
-// bars: {start,end,name} の配列。showName=true ならバー内に案件名を表示
-function laneHTML(label, bars, color, showName){
-  var html = '<div style="display:flex;align-items:center;margin-bottom:6px">';
-  html += '<div style="width:120px;flex:none;font-size:13px;font-weight:bold">'+label+'</div>';
+// bars: {start,end,name}。showName=true で「名前 時刻」表示
+function laneHTML(label, bars, color, showName, marginBottom){
+  var mb = marginBottom===undefined ? 6 : marginBottom;
+  var html = '<div style="display:flex;align-items:center;margin-bottom:'+mb+'px">';
+  html += '<div style="width:150px;flex:none;font-size:13px">'+label+'</div>';
   html += '<div style="position:relative;flex:1;height:30px;background:#f5f5f5;border-radius:4px">';
   for(var g=HOUR_START;g<=HOUR_END;g+=2){
     var gl=((g-HOUR_START)/SPAN)*100;
@@ -43,7 +45,7 @@ function laneHTML(label, bars, color, showName){
     if(en<=st) en=HOUR_END;
     var left=((st-HOUR_START)/SPAN)*100, width=((en-st)/SPAN)*100;
     var t=fmtHM(b.start)+"–"+fmtHM(b.end);
-    var inner = showName ? ((b.name||"")+" "+t) : t;  // 案件は名前＋時刻、シフトは時刻のみ
+    var inner = showName ? ((b.name?b.name+" ":"")+t) : t;
     html += '<div title="'+(b.name||"")+' ('+t+')" style="position:absolute;left:'+left+'%;width:'+width+'%;top:4px;bottom:4px;background:'+color+';color:#fff;border-radius:4px;font-size:11px;display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;padding:0 4px">'+inner+'</div>';
   });
   return html+'</div></div>';
@@ -68,18 +70,17 @@ function draw(){
 
   html += axisHTML();
 
-  var rows={}, order=[];
-  shifts.forEach(function(r){
-    var nm=(r[SHIFT.driver]&&r[SHIFT.driver].name)?r[SHIFT.driver].name:"(未割当)";
-    if(!rows[nm]){rows[nm]=[];order.push(nm);}
-    rows[nm].push({start:r[SHIFT.start], end:r[SHIFT.end], name:r[SHIFT.name]});
-  });
-  order.forEach(function(nm){ html += laneHTML(nm, rows[nm], COLOR.shift, false); }); // シフト=時刻のみ
+  // ドライバー単位でグルーピング（シフト・案件を同じキーに集約）
+  var byDriver = {}, order = [];
+  function ensure(name){ if(!byDriver[name]){ byDriver[name]={shift:[],assign:[]}; order.push(name); } }
+  shifts.forEach(function(s){ var nm=driverName(s,SHIFT.driver); ensure(nm); byDriver[nm].shift.push({start:s[SHIFT.start],end:s[SHIFT.end],name:s[SHIFT.name]}); });
+  assigns.forEach(function(a){ var nm=driverName(a,ASSIGN.driver); ensure(nm); byDriver[nm].assign.push({start:a[ASSIGN.start],end:a[ASSIGN.end],name:a[ASSIGN.name]}); });
 
-  if(assigns.length>0){
-    var bars = assigns.map(function(a){ return {start:a[ASSIGN.start], end:a[ASSIGN.end], name:a[ASSIGN.name]}; });
-    html += laneHTML("案件", bars, COLOR.assign, true); // 案件=名前＋時刻
-  }
+  // 各ドライバー：シフト行 → アサイン行
+  order.forEach(function(nm){
+    html += laneHTML(nm+'（シフト）',     byDriver[nm].shift,  COLOR.shift,  false, 2);
+    html += laneHTML(nm+'（アサイン状況）', byDriver[nm].assign, COLOR.assign, true, 14);
+  });
 
   html += '</div>';
   document.getElementById("output").innerHTML=html; bindNav();
