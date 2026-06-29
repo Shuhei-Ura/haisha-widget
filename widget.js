@@ -3,61 +3,53 @@ var SHIFT = { module:"Shifts",      name:"Name", start:"Start_Time", end:"End_Ti
 var ASSIGN= { module:"Assignments", name:"Name", start:"Start_Time", end:"End_Time", driver:"Driver" };
 var HOUR_START = 0, HOUR_END = 24;
 var COLOR = { shift:"#1f4e79", assign:"#e8730c" };
-var SNAP_MIN = 15;          // クリック時刻の丸め（分）
-var NEW_DURATION_MIN = 60;  // クリックで作る案件の長さ（分）
+var SNAP_MIN = 15;       // 丸め（分）
+var MIN_DURATION_MIN = 15; // 最小の長さ
 // =========================
 
 var allShifts = [], allAssigns = [];
 var current = new Date(); current.setHours(0,0,0,0);
 var SPAN = HOUR_END - HOUR_START;
-// ドライバー名 -> id（その日のシフト/案件から拾う）
 var driverIdByName = {};
 
 function pad(n){ return ("0"+n).slice(-2); }
 function ymd(d){ return d.getFullYear()+"/"+pad(d.getMonth()+1)+"/"+pad(d.getDate()); }
 function fmtHM(dt){ var d=new Date(dt); return pad(d.getHours())+":"+pad(d.getMinutes()); }
+function fmtHMh(hf){ var h=Math.floor(hf),m=Math.round((hf-h)*60); if(m===60){h++;m=0;} return pad(h)+":"+pad(m); }
 function hoursOfDay(dt){ var d=new Date(dt); return d.getHours()+d.getMinutes()/60; }
 function sameDay(dt){
   var d=new Date(dt);
   return d.getFullYear()===current.getFullYear()&&d.getMonth()===current.getMonth()&&d.getDate()===current.getDate();
 }
 function driverName(rec, key){ return (rec[key]&&rec[key].name)?rec[key].name:"(未割当)"; }
-// current日付 + 時(小数) → CRM用ISO文字列 "2026-06-07T09:00:00+09:00"
-function toISO(hoursFloat){
-  var h = Math.floor(hoursFloat);
-  var m = Math.round((hoursFloat - h)*60);
-  var d = new Date(current); d.setHours(h, m, 0, 0);
-  var tz = -d.getTimezoneOffset(); // 分。日本は+540
-  var sign = tz>=0?"+":"-"; tz=Math.abs(tz);
-  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(h)+":"+pad(m)+":00"
-    + sign + pad(Math.floor(tz/60)) + ":" + pad(tz%60);
+function snap(hf){ return Math.round(hf*60/SNAP_MIN)*SNAP_MIN/60; }
+function toISO(hf){
+  var h=Math.floor(hf), m=Math.round((hf-h)*60);
+  if(m===60){h++;m=0;}
+  var d=new Date(current); d.setHours(h,m,0,0);
+  var tz=-d.getTimezoneOffset(), sign=tz>=0?"+":"-"; tz=Math.abs(tz);
+  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(h)+":"+pad(m)+":00"+sign+pad(Math.floor(tz/60))+":"+pad(tz%60);
 }
 
 function axisHTML(){
   var h,left,html='<div style="display:flex;align-items:flex-end;margin-bottom:4px">';
   html += '<div style="width:150px;flex:none"></div>';
   html += '<div style="position:relative;flex:1;height:20px;border-bottom:1px solid #ccc">';
-  for(h=HOUR_START;h<=HOUR_END;h+=2){
-    left=((h-HOUR_START)/SPAN)*100;
-    html += '<span style="position:absolute;left:'+left+'%;transform:translateX(-50%);font-size:11px;color:#666">'+h+'</span>';
-  }
+  for(h=HOUR_START;h<=HOUR_END;h+=2){ left=((h-HOUR_START)/SPAN)*100;
+    html += '<span style="position:absolute;left:'+left+'%;transform:translateX(-50%);font-size:11px;color:#666">'+h+'</span>'; }
   return html+'</div></div>';
 }
 
-// clickable=true でレーンにクリック作成を仕込む（data-driver属性付与）
 function laneHTML(label, bars, color, showName, marginBottom, clickable, driverNm){
   var mb = marginBottom===undefined ? 6 : marginBottom;
   var html = '<div style="display:flex;align-items:center;margin-bottom:'+mb+'px">';
   html += '<div style="width:150px;flex:none;font-size:13px">'+label+'</div>';
   var laneAttr = clickable ? ' class="assignLane" data-driver="'+driverNm+'" style="cursor:crosshair;' : ' style="';
-  html += '<div'+laneAttr+'position:relative;flex:1;height:30px;background:#f5f5f5;border-radius:4px">';
-  for(var g=HOUR_START;g<=HOUR_END;g+=2){
-    var gl=((g-HOUR_START)/SPAN)*100;
-    html += '<div style="position:absolute;left:'+gl+'%;top:0;bottom:0;width:1px;background:#e0e0e0;pointer-events:none"></div>';
-  }
+  html += '<div'+laneAttr+'position:relative;flex:1;height:30px;background:#f5f5f5;border-radius:4px;user-select:none">';
+  for(var g=HOUR_START;g<=HOUR_END;g+=2){ var gl=((g-HOUR_START)/SPAN)*100;
+    html += '<div style="position:absolute;left:'+gl+'%;top:0;bottom:0;width:1px;background:#e0e0e0;pointer-events:none"></div>'; }
   bars.forEach(function(b){
-    var st=hoursOfDay(b.start), en=hoursOfDay(b.end);
-    if(en<=st) en=HOUR_END;
+    var st=hoursOfDay(b.start), en=hoursOfDay(b.end); if(en<=st) en=HOUR_END;
     var left=((st-HOUR_START)/SPAN)*100, width=((en-st)/SPAN)*100;
     var t=fmtHM(b.start)+"–"+fmtHM(b.end);
     var inner = showName ? ((b.name?b.name+" ":"")+t) : t;
@@ -69,8 +61,6 @@ function laneHTML(label, bars, color, showName, marginBottom, clickable, driverN
 function draw(){
   var shifts  = allShifts.filter(function(s){ return sameDay(s[SHIFT.start]); });
   var assigns = allAssigns.filter(function(a){ return sameDay(a[ASSIGN.start]); });
-
-  // ドライバー名→id を更新
   shifts.forEach(function(s){ if(s[SHIFT.driver]) driverIdByName[s[SHIFT.driver].name]=s[SHIFT.driver].id; });
   assigns.forEach(function(a){ if(a[ASSIGN.driver]) driverIdByName[a[ASSIGN.driver].name]=a[ASSIGN.driver].id; });
 
@@ -79,7 +69,7 @@ function draw(){
   html += '<button id="prevDay" style="cursor:pointer;font-size:16px;padding:4px 12px;border:1px solid #ccc;border-radius:6px;background:#fff">◀</button>';
   html += '<span style="font-size:18px;font-weight:bold;min-width:130px;text-align:center">'+ymd(current)+'</span>';
   html += '<button id="nextDay" style="cursor:pointer;font-size:16px;padding:4px 12px;border:1px solid #ccc;border-radius:6px;background:#fff">▶</button>';
-  html += '<span style="font-size:13px;color:#888">（シフト'+shifts.length+' / 案件'+assigns.length+'） 空きをクリックで案件作成</span>';
+  html += '<span style="font-size:13px;color:#888">（シフト'+shifts.length+' / 案件'+assigns.length+'） アサイン行をドラッグで案件作成</span>';
   html += '</div>';
 
   if(shifts.length===0 && assigns.length===0){
@@ -102,7 +92,7 @@ function draw(){
   html += '</div>';
   document.getElementById("output").innerHTML=html;
   bindNav();
-  bindLaneClick();
+  bindLaneDrag();
 }
 
 function bindNav(){
@@ -110,27 +100,58 @@ function bindNav(){
   document.getElementById("nextDay").onclick=function(){ current.setDate(current.getDate()+1); draw(); };
 }
 
-function bindLaneClick(){
+// ---- ドラッグで範囲選択 → 案件作成 ----
+function bindLaneDrag(){
   var lanes = document.getElementsByClassName("assignLane");
   for(var i=0;i<lanes.length;i++){
-    lanes[i].onclick = function(e){
-      var rect = this.getBoundingClientRect();
-      var ratio = (e.clientX - rect.left) / rect.width;     // 0〜1
-      var hourFloat = HOUR_START + ratio * SPAN;             // クリック時刻
-      // 15分スナップ
-      var snapped = Math.round(hourFloat * 60 / SNAP_MIN) * SNAP_MIN / 60;
-      var startH = snapped;
-      var endH = Math.min(HOUR_END, snapped + NEW_DURATION_MIN/60);
-      var nm = this.getAttribute("data-driver");
-      createAssignment(nm, startH, endH);
-    };
+    (function(lane){
+      var dragging=false, startRatio=0, ghost=null;
+
+      function ratioAt(clientX){
+        var rect=lane.getBoundingClientRect();
+        var r=(clientX-rect.left)/rect.width;
+        return Math.max(0, Math.min(1, r));
+      }
+
+      lane.addEventListener("mousedown", function(e){
+        dragging=true; startRatio=ratioAt(e.clientX);
+        ghost=document.createElement("div");
+        ghost.style.cssText="position:absolute;top:4px;bottom:4px;background:rgba(232,115,12,0.45);border:1px dashed #e8730c;border-radius:4px;pointer-events:none;font-size:11px;color:#7a3d00;display:flex;align-items:center;justify-content:center";
+        lane.appendChild(ghost);
+        updateGhost(startRatio);
+        e.preventDefault();
+      });
+      lane.addEventListener("mousemove", function(e){
+        if(!dragging) return;
+        updateGhost(ratioAt(e.clientX));
+      });
+      function updateGhost(curRatio){
+        var a=Math.min(startRatio,curRatio), b=Math.max(startRatio,curRatio);
+        var sh=snap(HOUR_START+a*SPAN), eh=snap(HOUR_START+b*SPAN);
+        if(eh-sh < MIN_DURATION_MIN/60) eh=sh+MIN_DURATION_MIN/60;
+        var left=((sh-HOUR_START)/SPAN)*100, width=((eh-sh)/SPAN)*100;
+        ghost.style.left=left+"%"; ghost.style.width=width+"%";
+        ghost.textContent=fmtHMh(sh)+"–"+fmtHMh(eh);
+        ghost._sh=sh; ghost._eh=eh;
+      }
+      function finish(e){
+        if(!dragging) return;
+        dragging=false;
+        var sh=ghost._sh, eh=ghost._eh;
+        if(ghost.parentNode) ghost.parentNode.removeChild(ghost);
+        ghost=null;
+        createAssignment(lane.getAttribute("data-driver"), sh, eh);
+      }
+      lane.addEventListener("mouseup", finish);
+      lane.addEventListener("mouseleave", function(e){ if(dragging) finish(e); });
+    })(lanes[i]);
   }
 }
 
 function createAssignment(driverNm, startH, endH){
   var driverId = driverIdByName[driverNm];
-  var title = window.prompt(driverNm + " の案件名を入力（" + fmtHM(toISO(startH)) + "〜" + fmtHM(toISO(endH)) + "）", "新規配送");
-  if(title === null) return; // キャンセル
+  var title = window.prompt(driverNm + " の案件名を入力（" + fmtHMh(startH) + "〜" + fmtHMh(endH) + "）", "新規配送");
+  if(title === null) return;
 
   var rec = {};
   rec[ASSIGN.name]  = title || "新規配送";
@@ -142,19 +163,15 @@ function createAssignment(driverNm, startH, endH){
     .then(function(resp){
       var d = resp && resp.data && resp.data[0];
       if(d && (d.code==="SUCCESS" || (d.details&&d.details.id))){
-        // 返ったIDを使ってメモリに追加 → 再描画
-        var newId = d.details ? d.details.id : null;
         var newRec = {};
         newRec[ASSIGN.name]=rec[ASSIGN.name];
         newRec[ASSIGN.start]=rec[ASSIGN.start];
         newRec[ASSIGN.end]=rec[ASSIGN.end];
         newRec[ASSIGN.driver]={ id:driverId, name:driverNm };
-        newRec.id = newId;
+        newRec.id = d.details ? d.details.id : null;
         allAssigns.push(newRec);
         draw();
-      } else {
-        alert("作成失敗:\n"+JSON.stringify(resp));
-      }
+      } else { alert("作成失敗:\n"+JSON.stringify(resp)); }
     })
     .catch(function(err){ alert("エラー:\n"+JSON.stringify(err)); });
 }
