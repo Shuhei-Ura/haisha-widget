@@ -1,13 +1,14 @@
 // ===== API名（確定）=====
 var SHIFT = { module:"Shifts",      name:"Name", start:"Start_Time", end:"End_Time", driver:"Driver" };
-var ASSIGN= { module:"Assignments", name:"Name", start:"Start_Time", end:"End_Time", driver:"Driver" };
+var ASSIGN= { module:"Assignments", name:"Name", start:"Start_Time", end:"End_Time", driver:"Driver", account:"Account", vehicle:"Vehicle" };
+var ACCT  = { module:"Accounts" };
+var VEH   = { module:"Vehicles" };
 var HOUR_START = 0, HOUR_END = 24;
 var COLOR = { shift:"#1f4e79", assign:"#e8730c" };
-var SNAP_MIN = 15;       // 丸め（分）
-var MIN_DURATION_MIN = 15; // 最小の長さ
+var SNAP_MIN = 15, MIN_DURATION_MIN = 15;
 // =========================
 
-var allShifts = [], allAssigns = [];
+var allShifts = [], allAssigns = [], accounts = [], vehicles = [];
 var current = new Date(); current.setHours(0,0,0,0);
 var SPAN = HOUR_END - HOUR_START;
 var driverIdByName = {};
@@ -17,15 +18,12 @@ function ymd(d){ return d.getFullYear()+"/"+pad(d.getMonth()+1)+"/"+pad(d.getDat
 function fmtHM(dt){ var d=new Date(dt); return pad(d.getHours())+":"+pad(d.getMinutes()); }
 function fmtHMh(hf){ var h=Math.floor(hf),m=Math.round((hf-h)*60); if(m===60){h++;m=0;} return pad(h)+":"+pad(m); }
 function hoursOfDay(dt){ var d=new Date(dt); return d.getHours()+d.getMinutes()/60; }
-function sameDay(dt){
-  var d=new Date(dt);
-  return d.getFullYear()===current.getFullYear()&&d.getMonth()===current.getMonth()&&d.getDate()===current.getDate();
-}
+function sameDay(dt){ var d=new Date(dt);
+  return d.getFullYear()===current.getFullYear()&&d.getMonth()===current.getMonth()&&d.getDate()===current.getDate(); }
 function driverName(rec, key){ return (rec[key]&&rec[key].name)?rec[key].name:"(未割当)"; }
 function snap(hf){ return Math.round(hf*60/SNAP_MIN)*SNAP_MIN/60; }
 function toISO(hf){
-  var h=Math.floor(hf), m=Math.round((hf-h)*60);
-  if(m===60){h++;m=0;}
+  var h=Math.floor(hf), m=Math.round((hf-h)*60); if(m===60){h++;m=0;}
   var d=new Date(current); d.setHours(h,m,0,0);
   var tz=-d.getTimezoneOffset(), sign=tz>=0?"+":"-"; tz=Math.abs(tz);
   return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(h)+":"+pad(m)+":00"+sign+pad(Math.floor(tz/60))+":"+pad(tz%60);
@@ -76,7 +74,6 @@ function draw(){
     html += '<p style="color:#888">この日のデータはありません。</p></div>';
     document.getElementById("output").innerHTML=html; bindNav(); return;
   }
-
   html += axisHTML();
 
   var byDriver = {}, order = [];
@@ -90,9 +87,9 @@ function draw(){
   });
 
   html += '</div>';
+  html += formModalHTML(); // 隠しモーダル
   document.getElementById("output").innerHTML=html;
-  bindNav();
-  bindLaneDrag();
+  bindNav(); bindLaneDrag(); bindModal();
 }
 
 function bindNav(){
@@ -100,77 +97,102 @@ function bindNav(){
   document.getElementById("nextDay").onclick=function(){ current.setDate(current.getDate()+1); draw(); };
 }
 
-// ---- ドラッグで範囲選択 → 案件作成 ----
+// ---- ドラッグ ----
 function bindLaneDrag(){
   var lanes = document.getElementsByClassName("assignLane");
   for(var i=0;i<lanes.length;i++){
     (function(lane){
       var dragging=false, startRatio=0, ghost=null;
-
-      function ratioAt(clientX){
-        var rect=lane.getBoundingClientRect();
-        var r=(clientX-rect.left)/rect.width;
-        return Math.max(0, Math.min(1, r));
-      }
-
+      function ratioAt(x){ var r=lane.getBoundingClientRect(); return Math.max(0,Math.min(1,(x-r.left)/r.width)); }
       lane.addEventListener("mousedown", function(e){
         dragging=true; startRatio=ratioAt(e.clientX);
         ghost=document.createElement("div");
         ghost.style.cssText="position:absolute;top:4px;bottom:4px;background:rgba(232,115,12,0.45);border:1px dashed #e8730c;border-radius:4px;pointer-events:none;font-size:11px;color:#7a3d00;display:flex;align-items:center;justify-content:center";
-        lane.appendChild(ghost);
-        updateGhost(startRatio);
-        e.preventDefault();
+        lane.appendChild(ghost); updateGhost(startRatio); e.preventDefault();
       });
-      lane.addEventListener("mousemove", function(e){
-        if(!dragging) return;
-        updateGhost(ratioAt(e.clientX));
-      });
-      function updateGhost(curRatio){
-        var a=Math.min(startRatio,curRatio), b=Math.max(startRatio,curRatio);
+      lane.addEventListener("mousemove", function(e){ if(dragging) updateGhost(ratioAt(e.clientX)); });
+      function updateGhost(cur){
+        var a=Math.min(startRatio,cur), b=Math.max(startRatio,cur);
         var sh=snap(HOUR_START+a*SPAN), eh=snap(HOUR_START+b*SPAN);
         if(eh-sh < MIN_DURATION_MIN/60) eh=sh+MIN_DURATION_MIN/60;
-        var left=((sh-HOUR_START)/SPAN)*100, width=((eh-sh)/SPAN)*100;
-        ghost.style.left=left+"%"; ghost.style.width=width+"%";
-        ghost.textContent=fmtHMh(sh)+"–"+fmtHMh(eh);
-        ghost._sh=sh; ghost._eh=eh;
+        ghost.style.left=((sh-HOUR_START)/SPAN)*100+"%"; ghost.style.width=((eh-sh)/SPAN)*100+"%";
+        ghost.textContent=fmtHMh(sh)+"–"+fmtHMh(eh); ghost._sh=sh; ghost._eh=eh;
       }
-      function finish(e){
-        if(!dragging) return;
-        dragging=false;
-        var sh=ghost._sh, eh=ghost._eh;
-        if(ghost.parentNode) ghost.parentNode.removeChild(ghost);
-        ghost=null;
-        createAssignment(lane.getAttribute("data-driver"), sh, eh);
+      function finish(){ if(!dragging) return; dragging=false;
+        var sh=ghost._sh, eh=ghost._eh; if(ghost.parentNode) ghost.parentNode.removeChild(ghost); ghost=null;
+        openModal(lane.getAttribute("data-driver"), sh, eh);
       }
       lane.addEventListener("mouseup", finish);
-      lane.addEventListener("mouseleave", function(e){ if(dragging) finish(e); });
+      lane.addEventListener("mouseleave", function(){ if(dragging) finish(); });
     })(lanes[i]);
   }
 }
 
-function createAssignment(driverNm, startH, endH){
-  var driverId = driverIdByName[driverNm];
-  var title = window.prompt(driverNm + " の案件名を入力（" + fmtHMh(startH) + "〜" + fmtHMh(endH) + "）", "新規配送");
-  if(title === null) return;
+// ---- モーダル（案件名・取引先・車両） ----
+function optionTags(list){
+  var s='<option value="">（未選択）</option>';
+  list.forEach(function(r){ s+='<option value="'+r.id+'">'+(r.Name||r.id)+'</option>'; });
+  return s;
+}
+function formModalHTML(){
+  return ''
+  + '<div id="ovl" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;align-items:center;justify-content:center">'
+  + '  <div style="background:#fff;padding:20px;border-radius:10px;width:340px;font-family:-apple-system,sans-serif">'
+  + '    <h3 style="margin:0 0 12px;font-size:16px">案件を作成</h3>'
+  + '    <div id="mInfo" style="font-size:12px;color:#666;margin-bottom:10px"></div>'
+  + '    <label style="font-size:12px">案件名</label>'
+  + '    <input id="mName" type="text" value="新規配送" style="width:100%;box-sizing:border-box;padding:6px;margin:2px 0 10px;border:1px solid #ccc;border-radius:6px">'
+  + '    <label style="font-size:12px">取引先</label>'
+  + '    <select id="mAccount" style="width:100%;box-sizing:border-box;padding:6px;margin:2px 0 10px;border:1px solid #ccc;border-radius:6px">'+optionTags(accounts)+'</select>'
+  + '    <label style="font-size:12px">車両</label>'
+  + '    <select id="mVehicle" style="width:100%;box-sizing:border-box;padding:6px;margin:2px 0 16px;border:1px solid #ccc;border-radius:6px">'+optionTags(vehicles)+'</select>'
+  + '    <div style="display:flex;gap:8px;justify-content:flex-end">'
+  + '      <button id="mCancel" style="padding:6px 14px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer">キャンセル</button>'
+  + '      <button id="mOk" style="padding:6px 14px;border:none;border-radius:6px;background:#1f4e79;color:#fff;cursor:pointer">作成</button>'
+  + '    </div>'
+  + '  </div>'
+  + '</div>';
+}
+var pending = null;
+function openModal(driverNm, startH, endH){
+  pending = { driverNm:driverNm, startH:startH, endH:endH };
+  document.getElementById("mInfo").textContent = driverNm + " ／ " + fmtHMh(startH) + "〜" + fmtHMh(endH);
+  document.getElementById("mName").value = "新規配送";
+  document.getElementById("mAccount").value = "";
+  document.getElementById("mVehicle").value = "";
+  document.getElementById("ovl").style.display = "flex";
+}
+function bindModal(){
+  document.getElementById("mCancel").onclick = function(){ document.getElementById("ovl").style.display="none"; pending=null; };
+  document.getElementById("mOk").onclick = function(){
+    var name = document.getElementById("mName").value || "新規配送";
+    var accId = document.getElementById("mAccount").value;
+    var vehId = document.getElementById("mVehicle").value;
+    document.getElementById("ovl").style.display="none";
+    createAssignment(pending.driverNm, pending.startH, pending.endH, name, accId, vehId);
+    pending=null;
+  };
+}
 
+function createAssignment(driverNm, startH, endH, name, accId, vehId){
+  var driverId = driverIdByName[driverNm];
   var rec = {};
-  rec[ASSIGN.name]  = title || "新規配送";
+  rec[ASSIGN.name]  = name;
   rec[ASSIGN.start] = toISO(startH);
   rec[ASSIGN.end]   = toISO(endH);
-  if(driverId) rec[ASSIGN.driver] = { id: driverId };
+  if(driverId) rec[ASSIGN.driver]  = { id: driverId };
+  if(accId)    rec[ASSIGN.account] = { id: accId };
+  if(vehId)    rec[ASSIGN.vehicle] = { id: vehId };
 
   ZOHO.CRM.API.insertRecord({ Entity: ASSIGN.module, APIData: rec, Trigger: ["workflow"] })
     .then(function(resp){
       var d = resp && resp.data && resp.data[0];
       if(d && (d.code==="SUCCESS" || (d.details&&d.details.id))){
-        var newRec = {};
-        newRec[ASSIGN.name]=rec[ASSIGN.name];
-        newRec[ASSIGN.start]=rec[ASSIGN.start];
-        newRec[ASSIGN.end]=rec[ASSIGN.end];
-        newRec[ASSIGN.driver]={ id:driverId, name:driverNm };
-        newRec.id = d.details ? d.details.id : null;
-        allAssigns.push(newRec);
-        draw();
+        var nr = {};
+        nr[ASSIGN.name]=name; nr[ASSIGN.start]=rec[ASSIGN.start]; nr[ASSIGN.end]=rec[ASSIGN.end];
+        nr[ASSIGN.driver]={ id:driverId, name:driverNm };
+        nr.id = d.details ? d.details.id : null;
+        allAssigns.push(nr); draw();
       } else { alert("作成失敗:\n"+JSON.stringify(resp)); }
     })
     .catch(function(err){ alert("エラー:\n"+JSON.stringify(err)); });
@@ -180,10 +202,15 @@ ZOHO.embeddedApp.on("PageLoad", function(){
   document.getElementById("output").innerText="読み込み中…";
   Promise.all([
     ZOHO.CRM.API.getAllRecords({Entity:SHIFT.module,  sort_order:"asc", per_page:200, page:1}),
-    ZOHO.CRM.API.getAllRecords({Entity:ASSIGN.module, sort_order:"asc", per_page:200, page:1})
-  ]).then(function(res){
+    ZOHO.CRM.API.getAllRecords({Entity:ASSIGN.module, sort_order:"asc", per_page:200, page:1}),
+    ZOHO.CRM.API.getAllRecords({Entity:ACCT.module,   sort_order:"asc", per_page:200, page:1}),
+    ZOHO.CRM.API.getAllRecords({Entity:VEH.module,    sort_order:"asc", per_page:200, page:1})
+  ].map(function(p){ return p.catch(function(){ return {data:[]}; }); }))
+  .then(function(res){
     allShifts  = (res[0]&&res[0].data)?res[0].data:[];
     allAssigns = (res[1]&&res[1].data)?res[1].data:[];
+    accounts   = (res[2]&&res[2].data)?res[2].data:[];
+    vehicles   = (res[3]&&res[3].data)?res[3].data:[];
     draw();
   }).catch(function(err){
     document.getElementById("output").innerHTML='<pre style="color:#b00">エラー:\n'+JSON.stringify(err,null,2)+'</pre>';
