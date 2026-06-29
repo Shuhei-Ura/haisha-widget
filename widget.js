@@ -15,6 +15,7 @@ var driverIdByName = {};
 
 function pad(n){ return ("0"+n).slice(-2); }
 function ymd(d){ return d.getFullYear()+"/"+pad(d.getMonth()+1)+"/"+pad(d.getDate()); }
+function ymdDash(d){ return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
 function fmtHM(dt){ var d=new Date(dt); return pad(d.getHours())+":"+pad(d.getMinutes()); }
 function fmtHMh(hf){ var h=Math.floor(hf),m=Math.round((hf-h)*60); if(m===60){h++;m=0;} return pad(h)+":"+pad(m); }
 function hoursOfDay(dt){ var d=new Date(dt); return d.getHours()+d.getMinutes()/60; }
@@ -22,6 +23,8 @@ function sameDay(dt){ var d=new Date(dt);
   return d.getFullYear()===current.getFullYear()&&d.getMonth()===current.getMonth()&&d.getDate()===current.getDate(); }
 function driverName(rec, key){ return (rec[key]&&rec[key].name)?rec[key].name:"(未割当)"; }
 function snap(hf){ return Math.round(hf*60/SNAP_MIN)*SNAP_MIN/60; }
+// lookup候補の表示名（取引先=Account_Name優先、無ければName、最後にid）
+function labelOf(r){ return r.Account_Name || r.Name || r.id; }
 function toISO(hf){
   var h=Math.floor(hf), m=Math.round((hf-h)*60); if(m===60){h++;m=0;}
   var d=new Date(current); d.setHours(h,m,0,0);
@@ -63,11 +66,14 @@ function draw(){
   assigns.forEach(function(a){ if(a[ASSIGN.driver]) driverIdByName[a[ASSIGN.driver].name]=a[ASSIGN.driver].id; });
 
   var html = '<div style="font-family:-apple-system,sans-serif">';
+  // 日付ナビ（真ん中の日付に隠しdate inputを重ねる）
   html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">';
   html += '<button id="prevDay" style="cursor:pointer;font-size:16px;padding:4px 12px;border:1px solid #ccc;border-radius:6px;background:#fff">◀</button>';
-  html += '<span style="font-size:18px;font-weight:bold;min-width:130px;text-align:center">'+ymd(current)+'</span>';
+  html += '<span id="dateLabel" style="position:relative;font-size:18px;font-weight:bold;min-width:130px;text-align:center;cursor:pointer;color:#1f4e79;text-decoration:underline dotted">'+ymd(current)
+        +   '<input id="datePick" type="date" value="'+ymdDash(current)+'" style="position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;cursor:pointer">'
+        + '</span>';
   html += '<button id="nextDay" style="cursor:pointer;font-size:16px;padding:4px 12px;border:1px solid #ccc;border-radius:6px;background:#fff">▶</button>';
-  html += '<span style="font-size:13px;color:#888">（シフト'+shifts.length+' / 案件'+assigns.length+'） アサイン行をドラッグで案件作成</span>';
+  html += '<span style="font-size:13px;color:#888">（シフト'+shifts.length+' / 案件'+assigns.length+'） 日付クリックでジャンプ・アサイン行ドラッグで作成</span>';
   html += '</div>';
 
   if(shifts.length===0 && assigns.length===0){
@@ -87,7 +93,7 @@ function draw(){
   });
 
   html += '</div>';
-  html += formModalHTML(); // 隠しモーダル
+  html += formModalHTML();
   document.getElementById("output").innerHTML=html;
   bindNav(); bindLaneDrag(); bindModal();
 }
@@ -95,9 +101,12 @@ function draw(){
 function bindNav(){
   document.getElementById("prevDay").onclick=function(){ current.setDate(current.getDate()-1); draw(); };
   document.getElementById("nextDay").onclick=function(){ current.setDate(current.getDate()+1); draw(); };
+  var dp=document.getElementById("datePick");
+  if(dp) dp.onchange=function(){
+    if(this.value){ var p=this.value.split("-"); current=new Date(+p[0], +p[1]-1, +p[2]); current.setHours(0,0,0,0); draw(); }
+  };
 }
 
-// ---- ドラッグ ----
 function bindLaneDrag(){
   var lanes = document.getElementsByClassName("assignLane");
   for(var i=0;i<lanes.length;i++){
@@ -128,10 +137,9 @@ function bindLaneDrag(){
   }
 }
 
-// ---- モーダル（案件名・取引先・車両） ----
 function optionTags(list){
   var s='<option value="">（未選択）</option>';
-  list.forEach(function(r){ s+='<option value="'+r.id+'">'+(r.Name||r.id)+'</option>'; });
+  list.forEach(function(r){ s+='<option value="'+r.id+'">'+labelOf(r)+'</option>'; });
   return s;
 }
 function formModalHTML(){
