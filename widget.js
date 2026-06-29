@@ -23,7 +23,6 @@ function sameDay(dt){ var d=new Date(dt);
   return d.getFullYear()===current.getFullYear()&&d.getMonth()===current.getMonth()&&d.getDate()===current.getDate(); }
 function driverName(rec, key){ return (rec[key]&&rec[key].name)?rec[key].name:"(未割当)"; }
 function snap(hf){ return Math.round(hf*60/SNAP_MIN)*SNAP_MIN/60; }
-// lookup候補の表示名（取引先=Account_Name優先、無ければName、最後にid）
 function labelOf(r){ return r.Account_Name || r.Name || r.id; }
 function toISO(hf){
   var h=Math.floor(hf), m=Math.round((hf-h)*60); if(m===60){h++;m=0;}
@@ -66,45 +65,73 @@ function draw(){
   assigns.forEach(function(a){ if(a[ASSIGN.driver]) driverIdByName[a[ASSIGN.driver].name]=a[ASSIGN.driver].id; });
 
   var html = '<div style="font-family:-apple-system,sans-serif">';
-  // 日付ナビ（真ん中の日付に隠しdate inputを重ねる）
-  html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">';
+  html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">';
   html += '<button id="prevDay" style="cursor:pointer;font-size:16px;padding:4px 12px;border:1px solid #ccc;border-radius:6px;background:#fff">◀</button>';
-  html += '<span id="dateLabel" style="position:relative;font-size:18px;font-weight:bold;min-width:130px;text-align:center;cursor:pointer;color:#1f4e79;text-decoration:underline dotted">'+ymd(current)
-        +   '<input id="datePick" type="date" value="'+ymdDash(current)+'" style="position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;cursor:pointer">'
-        + '</span>';
+  html += '<span id="dateLabel" style="font-size:18px;font-weight:bold;min-width:130px;text-align:center;cursor:pointer;color:#1f4e79;text-decoration:underline dotted" title="クリックで日付指定">'+ymd(current)+'</span>';
   html += '<button id="nextDay" style="cursor:pointer;font-size:16px;padding:4px 12px;border:1px solid #ccc;border-radius:6px;background:#fff">▶</button>';
-  html += '<span style="font-size:13px;color:#888">（シフト'+shifts.length+' / 案件'+assigns.length+'） 日付クリックでジャンプ・アサイン行ドラッグで作成</span>';
+  html += '<button id="todayBtn" style="cursor:pointer;font-size:12px;padding:4px 10px;border:1px solid #ccc;border-radius:6px;background:#fff">今日</button>';
+  html += '<span style="font-size:13px;color:#888">（シフト'+shifts.length+' / 案件'+assigns.length+'）</span>';
   html += '</div>';
 
   if(shifts.length===0 && assigns.length===0){
-    html += '<p style="color:#888">この日のデータはありません。</p></div>';
-    document.getElementById("output").innerHTML=html; bindNav(); return;
+    html += '<p style="color:#888">この日のデータはありません。</p>';
+  } else {
+    html += axisHTML();
+    var byDriver = {}, order = [];
+    function ensure(name){ if(!byDriver[name]){ byDriver[name]={shift:[],assign:[]}; order.push(name); } }
+    shifts.forEach(function(s){ var nm=driverName(s,SHIFT.driver); ensure(nm); byDriver[nm].shift.push({start:s[SHIFT.start],end:s[SHIFT.end],name:s[SHIFT.name]}); });
+    assigns.forEach(function(a){ var nm=driverName(a,ASSIGN.driver); ensure(nm); byDriver[nm].assign.push({start:a[ASSIGN.start],end:a[ASSIGN.end],name:a[ASSIGN.name]}); });
+    order.forEach(function(nm){
+      html += laneHTML(nm+'（シフト）',     byDriver[nm].shift,  COLOR.shift,  false, 2, false, nm);
+      html += laneHTML(nm+'（アサイン状況）', byDriver[nm].assign, COLOR.assign, true, 14, true, nm);
+    });
   }
-  html += axisHTML();
-
-  var byDriver = {}, order = [];
-  function ensure(name){ if(!byDriver[name]){ byDriver[name]={shift:[],assign:[]}; order.push(name); } }
-  shifts.forEach(function(s){ var nm=driverName(s,SHIFT.driver); ensure(nm); byDriver[nm].shift.push({start:s[SHIFT.start],end:s[SHIFT.end],name:s[SHIFT.name]}); });
-  assigns.forEach(function(a){ var nm=driverName(a,ASSIGN.driver); ensure(nm); byDriver[nm].assign.push({start:a[ASSIGN.start],end:a[ASSIGN.end],name:a[ASSIGN.name]}); });
-
-  order.forEach(function(nm){
-    html += laneHTML(nm+'（シフト）',     byDriver[nm].shift,  COLOR.shift,  false, 2, false, nm);
-    html += laneHTML(nm+'（アサイン状況）', byDriver[nm].assign, COLOR.assign, true, 14, true, nm);
-  });
 
   html += '</div>';
   html += formModalHTML();
+  html += dateModalHTML();
   document.getElementById("output").innerHTML=html;
-  bindNav(); bindLaneDrag(); bindModal();
+  bindNav(); bindLaneDrag(); bindModal(); bindDateModal();
 }
 
 function bindNav(){
   document.getElementById("prevDay").onclick=function(){ current.setDate(current.getDate()-1); draw(); };
   document.getElementById("nextDay").onclick=function(){ current.setDate(current.getDate()+1); draw(); };
-  var dp=document.getElementById("datePick");
-  if(dp) dp.onchange=function(){
-    if(this.value){ var p=this.value.split("-"); current=new Date(+p[0], +p[1]-1, +p[2]); current.setHours(0,0,0,0); draw(); }
+  document.getElementById("todayBtn").onclick=function(){ current=new Date(); current.setHours(0,0,0,0); draw(); };
+  document.getElementById("dateLabel").onclick=function(){
+    document.getElementById("dInput").value = ymdDash(current);
+    document.getElementById("dOvl").style.display="flex";
+    document.getElementById("dInput").focus();
   };
+}
+
+// ---- 日付ジャンプ用モーダル（type=dateに依存しない） ----
+function dateModalHTML(){
+  return ''
+  + '<div id="dOvl" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;align-items:center;justify-content:center">'
+  + '  <div style="background:#fff;padding:20px;border-radius:10px;width:280px;font-family:-apple-system,sans-serif">'
+  + '    <h3 style="margin:0 0 10px;font-size:15px">日付を指定して移動</h3>'
+  + '    <input id="dInput" type="text" placeholder="2026-06-07" style="width:100%;box-sizing:border-box;padding:8px;font-size:15px;border:1px solid #ccc;border-radius:6px;text-align:center">'
+  + '    <p style="font-size:11px;color:#999;margin:6px 0 14px">形式: YYYY-MM-DD（例 2026-06-07）</p>'
+  + '    <div style="display:flex;gap:8px;justify-content:flex-end">'
+  + '      <button id="dCancel" style="padding:6px 14px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer">キャンセル</button>'
+  + '      <button id="dGo" style="padding:6px 14px;border:none;border-radius:6px;background:#1f4e79;color:#fff;cursor:pointer">移動</button>'
+  + '    </div>'
+  + '  </div>'
+  + '</div>';
+}
+function bindDateModal(){
+  document.getElementById("dCancel").onclick=function(){ document.getElementById("dOvl").style.display="none"; };
+  function go(){
+    var v=document.getElementById("dInput").value.trim().replace(/\//g,"-");
+    var m=v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if(!m){ alert("YYYY-MM-DD 形式で入力してください"); return; }
+    current=new Date(+m[1], +m[2]-1, +m[3]); current.setHours(0,0,0,0);
+    document.getElementById("dOvl").style.display="none";
+    draw();
+  }
+  document.getElementById("dGo").onclick=go;
+  document.getElementById("dInput").onkeydown=function(e){ if(e.key==="Enter") go(); };
 }
 
 function bindLaneDrag(){
